@@ -172,20 +172,16 @@ class VllmArguments:
     Args:
         vllm_gpu_memory_utilization (float): GPU memory utilization. Default is 0.9.
         vllm_tensor_parallel_size (int): Tensor parallelism size. Default is 1.
-        vllm_pipeline_parallel_size (int): Pipeline parallelism size. Default is 1.
-        vllm_enable_expert_parallel (bool): Flag to enable expert parallelism for MoE models. Default is False.
+        vllm_pipeline_parallel_size(int): Pipeline parallelism size. Default is 1.
         vllm_max_num_seqs (int): Maximum number of sequences. Default is 256.
         vllm_max_model_len (Optional[int]): Maximum model length. Default is None.
         vllm_disable_custom_all_reduce (bool): Flag to disable custom all-reduce. Default is True.
         vllm_enforce_eager (bool): Flag to enforce eager execution. Default is False.
         vllm_limit_mm_per_prompt (Optional[str]): Limit multimedia per prompt. Default is None.
         vllm_max_lora_rank (int): Maximum LoRA rank. Default is 16.
-        vllm_enable_prefix_caching (Optional[bool]): Flag to enable automatic prefix caching. Default is None.
+        vllm_enable_prefix_caching (bool): Flag to enable automatic prefix caching. Default is False.
         vllm_use_async_engine (bool): Whether to use async engine for vLLM. Default is False.
         vllm_quantization (Optional[str]): The quantization method for vLLM. Default is None.
-        vllm_reasoning_parser (Optional[str]): The reasoning parser for vLLM. Default is None.
-        vllm_disable_cascade_attn (bool): Flag to disable cascade attention. Default is False.
-        vllm_mm_processor_cache_gb (Optional[float]): MM processor cache size in GB. Default is None.
         vllm_data_parallel_size (int): Data parallelism size for vLLM rollout. Default is 1.
     """
     # vllm
@@ -209,7 +205,30 @@ class VllmArguments:
     # rollout
     vllm_data_parallel_size: int = 1
 
+    # compatibility (will be removed in ms-swift 3.8 and later)
+    gpu_memory_utilization: Optional[float] = None
+    tensor_parallel_size: Optional[int] = None
+    max_model_len: Optional[int] = None
+    limit_mm_per_prompt: Optional[Union[dict, str]] = None
+    data_parallel_size: Optional[int] = None
+    use_async_engine: Optional[bool] = None
+
+    def _handle_compatibility(self):
+        if self.gpu_memory_utilization is not None:
+            self.vllm_gpu_memory_utilization = self.gpu_memory_utilization
+        if self.tensor_parallel_size is not None:
+            self.vllm_tensor_parallel_size = self.tensor_parallel_size
+        if self.max_model_len is not None:
+            self.vllm_max_model_len = self.max_model_len
+        if self.limit_mm_per_prompt is not None:
+            self.vllm_limit_mm_per_prompt = self.limit_mm_per_prompt
+        if self.data_parallel_size is not None:
+            self.vllm_data_parallel_size = self.data_parallel_size
+        if self.use_async_engine is not None:
+            self.vllm_use_async_engine = self.use_async_engine
+
     def __post_init__(self):
+        self._handle_compatibility()
         self.vllm_limit_mm_per_prompt = json_parse_to_dict(self.vllm_limit_mm_per_prompt)
         self.vllm_engine_kwargs = json_parse_to_dict(self.vllm_engine_kwargs)
 
@@ -292,6 +311,7 @@ class GRPOArgumentsMixin(RolloutTrainerArgumentsMixin):
     repetition_n_grams: int = 3
     repetition_max_penalty: float = -1.0
 
+
     reward_model: Optional[List[str]] = None
     reward_model_plugin: Optional[List[str]] = None
 
@@ -300,7 +320,16 @@ class GRPOArgumentsMixin(RolloutTrainerArgumentsMixin):
     ref_model_sync_steps: int = 512
     ref_model_mixup_alpha: float = 0.6
 
+    async_generate: bool = False
+
+    sleep_level: int = 0
+    move_model_batches: Optional[int] = None
+    offload_optimizer: bool = False
+    offload_model: bool = False
+    gc_collect_after_offload: bool = False  # deprecated
+
     # multi turn
+    multi_turn_func: Optional[str] = None  # deprecated
     multi_turn_scheduler: Optional[str] = None
     max_turns: Optional[int] = None
     completion_length_limit_scope: Literal['total', 'per_round'] = 'per_round'
@@ -335,6 +364,13 @@ class GRPOArgumentsMixin(RolloutTrainerArgumentsMixin):
 
     # dataset
     dataset_shuffle: Optional[bool] = True
+
+    # SAGPO (Semantic Anchor-Guided Policy Optimization)
+    enable_sagpo: bool = False
+    sagpo_alpha: float = 0.1  # Weight for alignment loss
+    sagpo_caption_field: str = 'desc_phrases'  # Field name for caption/description text
+    sagpo_use_kl_penalty: bool = False  # Enable standard GRPO KL divergence penalty (ablation switch)
+
 
 
 @dataclass
