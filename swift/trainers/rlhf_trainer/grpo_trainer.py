@@ -1,29 +1,21 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 # Part of the implementation is borrowed from huggingface/trl.
-import base64
 import concurrent.futures
 import inspect
 import os
-import re
 import time
-import uuid
 from collections import defaultdict, deque
-from concurrent.futures import Future
 from contextlib import contextmanager, nullcontext
 from copy import copy, deepcopy
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-import json
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 import transformers
-from accelerate.utils import broadcast_object_list, gather, gather_object, is_peft_model, set_seed
-from dacite import from_dict
+from accelerate.utils import gather, gather_object, is_peft_model, set_seed
 from packaging import version
-from torch.nn import ModuleList
-from torch.utils.data import DataLoader
-from transformers import PreTrainedModel, TrainerCallback
+from transformers import PreTrainedModel
 from transformers.trainer import Trainer
 from trl import GRPOTrainer as HFGRPOTrainer
 from trl.models import prepare_deepspeed
@@ -32,23 +24,16 @@ from trl.trainer.callbacks import SyncRefModelCallback
 from trl.trainer.grpo_trainer import RepeatSampler, nanmax, nanmin, nanstd
 from trl.trainer.utils import selective_log_softmax
 
-from swift.llm import (InferRequest, MultiModelKeys, RequestConfig, RolloutInferRequest, RowPreprocessor, Template,
-                       to_device)
-from swift.llm.infer.protocol import ChatCompletionResponse, RolloutOutput
-from swift.llm.model.utils import get_llm_model
+from swift.llm import RowPreprocessor, Template, to_device
 from swift.llm.template.template_inputs import TemplateInputs
-from swift.plugin import multi_turns, orms, rm_plugins
-from swift.plugin.multi_turn import MultiTurnScheduler
-from swift.utils import (JsonlWriter, empty_cache, get_current_device, get_logger, is_swanlab_available,
-                         is_vllm_available, is_wandb_available, remove_response, seed_worker,
-                         unwrap_model_for_generation)
+from swift.plugin import orms, rm_plugins
+from swift.utils import (JsonlWriter, empty_cache, get_logger, is_swanlab_available, is_wandb_available,
+                         remove_response, seed_worker, unwrap_model_for_generation)
 from ..mixin import SwiftMixin
-from .rlhf_mixin import RLHFTrainerMixin
-from .utils import (_ForwardRedirection, compute_chord_loss, identity_data_collator, load_pil_img,
-                   make_chord_sft_dataset, patch_lora_merge, patch_lora_unmerge, patch_profiling_context,
-                   patch_profiling_decorator, patch_save_last_checkpoint, replace_assistant_response_with_ids,
-                   set_expandable_segments)
-from .vllm_client import VLLMClient
+from .rollout_mixin import DataType, RolloutTrainerMixin
+from .utils import (_ForwardRedirection, compute_chord_loss, get_even_process_data, identity_data_collator,
+                    load_pil_img, make_chord_sft_dataset, patch_profiling_context, patch_profiling_decorator,
+                    patch_save_last_checkpoint, replace_assistant_response_with_ids)
 
 try:
     from trl.trainer.utils import entropy_from_logits
@@ -65,29 +50,8 @@ if is_wandb_available():
 if is_swanlab_available():
     import swanlab
 
-DataType = List[Dict[str, Union[torch.Tensor, Any]]]
-T = TypeVar('T')
 
-
-class AsyncGenerateCallback(TrainerCallback):
-
-    def __init__(self, trainer):
-        self.trainer = trainer
-
-    # offload original_modules to cpu, to save memory
-    def on_train_begin(self, args, state, control, **kwargs):
-        self.trainer.queue = self.trainer.train_queue
-        train_dataloader = getattr(state, 'train_dataloader', None) or kwargs.get('train_dataloader')
-        self.trainer._prefetch(train_dataloader)
-        
-
-
-@dataclass
-class DataCache:
-    results: DataType
-
-
-class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
+class GRPOTrainer(RolloutTrainerMixin, SwiftMixin, HFGRPOTrainer):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def __init__(self,
