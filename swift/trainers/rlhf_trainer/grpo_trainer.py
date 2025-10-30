@@ -11,7 +11,7 @@ from collections import defaultdict, deque
 from concurrent.futures import Future
 from contextlib import contextmanager, nullcontext
 from copy import copy, deepcopy
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TypeVar
 
 import json
 import torch
